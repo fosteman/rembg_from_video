@@ -4,6 +4,10 @@ import os
 import ffmpeg
 import pathlib
 from rembg.bg import remove
+from ultralytics import YOLO
+
+# Load a pretrained YOLOv8n model
+model = YOLO('best-12180 elaborate kudzu.pt')
 
 #Parse args
 parser = argparse.ArgumentParser(description='Applies rembg to the frames of a video')
@@ -24,21 +28,25 @@ height = int(video_stream['height'])
 whstr = str(width) + 'x' + str(height)
 framerate = video_stream['avg_frame_rate']
 
+workspace = str(pathlib.Path(__file__).parent.absolute())
+files_dir = str(pathlib.Path(__file__).parent.absolute()) + "/" + "frames"
+processed_dir = str(pathlib.Path(__file__).parent.absolute()) + "/" + "processed"
+inference_dir = str(pathlib.Path(__file__).parent.absolute()) + "/" + "segmented"
+
 #Extract input video frames
 if not args.skip_extract:
-  if not os.path.isdir(str(pathlib.Path(__file__).parent.absolute()) + "\\" + "frames"):
-    os.mkdir(str(pathlib.Path(__file__).parent.absolute()) + "\\" + "frames")
+  if not os.path.isdir(files_dir):
+    os.mkdir(files_dir)
 
   stream = ffmpeg.input(args.input)
-  stream = ffmpeg.output(stream, "frames\\%04d.png")
+  stream = ffmpeg.output(stream, "frames/%04d.png")
   ffmpeg.run(stream)
 
 #Process frames with rembg
 if not args.skip_process:
-  if not os.path.isdir(str(pathlib.Path(__file__).parent.absolute()) + "\\" + "processed"):
-    os.mkdir(str(pathlib.Path(__file__).parent.absolute()) + "\\" + "processed")
-  files_dir = str(pathlib.Path(__file__).parent.absolute()) + "\\" + "frames"
-  processed_dir = str(pathlib.Path(__file__).parent.absolute()) + "\\" + "processed"
+  if not os.path.isdir(processed_dir):
+    os.mkdir(processed_dir)
+  
 
   for file in os.listdir(files_dir):
     with open(os.path.join(files_dir, file), "rb") as i:
@@ -46,8 +54,19 @@ if not args.skip_process:
           input = i.read()
           output = remove(input, alpha_matting=args.a, alpha_matting_foreground_threshold=args.af, alpha_matting_background_threshold=args.ab, alpha_matting_erode_size=args.ae)
           o.write(output)
+  
+model.predict(processed_dir, 
+                               save_frames=True,
+                  device='mps', imgsz=2048, 
+                  conf=0.1, show=False, 
+                  save=True, save_txt=True,
+                show_boxes=True,
+                                    
+                classes=[0,2,3,4,5],
+                
+                project=inference_dir, name='segmented')
 
 #Output video
-stream = ffmpeg.input("processed\\%04d.png", r=framerate, f='image2', s=whstr, pix_fmt='yuv420p')
-stream = ffmpeg.output(stream, "output.mp4", vcodec='libx264', crf=25)
+stream = ffmpeg.input("segmented/%04d.png", r=framerate, f='image2', s=whstr, pix_fmt='yuv420p')
+stream = ffmpeg.output(stream, workspace + '/' + args.input + "-bg-removed-segmented.mp4", vcodec='libx264', crf=25)
 ffmpeg.run(stream)
